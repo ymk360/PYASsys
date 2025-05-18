@@ -101,7 +101,8 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         "sensitivity": 0,  # "0" (Medium), "1" (High)
         "extend_mode": 0,  # "0" (False), "1" (True)
         "white_lists": [],
-        "block_lists": []}
+        "block_lists": [],
+        "scan_mode": 0} # "0" (Default Engines), "1" (Extended Engines)
         self.pass_windows = [
         {'': ''}, {'PYAS': 'Qt5152QWindowIcon'},
         {'': 'Shell_TrayWnd'}, {'': 'WorkerW'}]
@@ -250,6 +251,16 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         except Exception as e:
             print(e)
 
+        try:
+            # Initialize new scanning engines here
+            self.new_engine = NewScanEngine()
+            # Add other engines as they are integrated
+            self.all_engines = [self.model, self.rules, self.new_engine]
+            self.default_engines = [self.model, self.rules] # Define default engines
+            self.extended_engines = [self.new_engine] # Define extended engines
+        except Exception as e:
+            print(f"[引擎初始化错误] {e}")
+
     def init_config_icon(self): # 初始化圖標
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.activated.connect(self.init_config_show)
@@ -262,6 +273,16 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         self.Process_sim = QStringListModel()
         self.Process_Timer = QTimer()
         self.Process_Timer.timeout.connect(self.process_list)
+
+        # Add rounded corners
+        self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setStyleSheet("""
+            QMainWindow {
+                border-radius: 10px;
+            }
+        """)
+
         self.ui.widget_2.lower()
         self.ui.Navigation_Bar.raise_()
         self.ui.Window_widget.raise_()
@@ -292,7 +313,8 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         self.ui.About_widget.hide()
         self.ui.State_output.style().polish(self.ui.State_output.verticalScrollBar())
         self.ui.Virus_Scan_output.style().polish(self.ui.Virus_Scan_output.verticalScrollBar())
-        self.ui.License_terms.setText('''MIT License\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.''')
+        self.ui.License_terms.setText('''MIT License\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.''')}]}}}
+
 
     def init_config_conn(self): # 初始化交互
         self.ui.Close_Button.clicked.connect(self.close)
