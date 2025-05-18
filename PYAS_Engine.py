@@ -1,28 +1,20 @@
 import os, sys, time, json, numpy
+import ctypes
+
+# Explicitly load libyara.dll
+try:
+    libyara_path = os.path.join(sys.prefix, 'DLLs', 'libyara.dll')
+    ctypes.WinDLL(libyara_path)
+except OSError:
+    # Handle the case where the DLL is not in the default location
+    # You might need to add more search paths here
+    pass
+
+
 import chardet, pefile, onnxruntime
 from PIL import Image
-
-# 在文件头部添加 DLL 加载路径
 import os
-import sys
-import os
-from pathlib import Path
 
-# 动态获取项目根目录
-PROJECT_ROOT = Path(__file__).resolve().parent
-print(f'[调试信息] PYAS_Engine项目根目录: {PROJECT_ROOT}')
-DLL_PATH = PROJECT_ROOT / 'Driver' / 'Runtime'
-print(f'[调试信息] DLL路径: {DLL_PATH}, 存在: {DLL_PATH.exists()}')
-
-# 安全添加DLL目录
-try:
-    if not DLL_PATH.exists():
-        raise FileNotFoundError(f'安全运行时目录缺失: {DLL_PATH}')
-    os.add_dll_directory(str(DLL_PATH))
-except Exception as e:
-    print(f'[安全启动异常] {str(e)}')
-    sys.exit(101)
-# 已通过动态路径解析添加DLL目录，无需硬编码路径
 
 class YRScan:
     def __init__(self):
@@ -174,16 +166,3 @@ class DLScan:
                 if self.is_text_file(file_content, 1024):
                     match_data[ftype] = file_content
         return match_data
-
-class NewScanEngine:
-    def __init__(self):
-        pass
-
-    def scan(self, file_path):
-        # Placeholder for new scanning logic
-        print(f"Scanning {file_path} with NewScanEngine")
-        # Simulate a scan result
-        import random
-        if random.random() > 0.9:
-            return "NewEngine/Malware", 95
-        return False, False

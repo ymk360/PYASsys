@@ -1,7 +1,6 @@
 from cmath import e
-import os, gc, sys, time, json, math
+import os, gc, sys, time, json
 import ctypes, ctypes.wintypes
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from PYAS_Engine import YRScan, DLScan
 from PYAS_Suffixes import file_types
 from PYAS_Language import translate_dict
@@ -11,10 +10,6 @@ from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 from subprocess import *
 from threading import *
-import hashlib
-import zlib
-import struct
-import re
 
 class PROCESSENTRY32(ctypes.Structure): # 初始化定義
     _fields_ = [
@@ -101,55 +96,22 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         "sensitivity": 0,  # "0" (Medium), "1" (High)
         "extend_mode": 0,  # "0" (False), "1" (True)
         "white_lists": [],
-        "block_lists": [],
-        "scan_mode": 0} # "0" (Default Engines), "1" (Extended Engines)
+        "block_lists": []}
         self.pass_windows = [
         {'': ''}, {'PYAS': 'Qt5152QWindowIcon'},
         {'': 'Shell_TrayWnd'}, {'': 'WorkerW'}]
 
     def init_config_path(self): # 初始化路徑
         try:
-            from pathlib import Path
-            import sys
-            
-            # 动态获取项目根目录
-            self.pyas_root = Path(__file__).resolve().parent
-            print(f"\033[33m[调试信息] 项目根目录: {self.pyas_root}\033[0m")
-            
-            # 定义关键路径
-            self.path_pyas = str(Path(__file__).resolve())  # 保留path_pyas以兼容旧代码
-            self.path_conf = self.pyas_root / "Config"
-            self.file_conf = str(self.path_conf / "PYAS_Config.json")  # 添加配置文件路径
-            self.path_model = self.pyas_root / "Engine/Model"
-            self.path_rules = self.pyas_root / "Engine/Rules"
-            self.path_driver = self.pyas_root / "Driver/Protect"
-            self.path_runtime = self.pyas_root / "Driver/Runtime"
-            
-            # 防御性路径检查
-            required_paths = [
-                (self.path_driver, "驱动保护目录"),
-                (self.path_runtime, "安全运行时目录"),
-                (self.path_model, "AI模型目录"),
-                (self.path_rules, "规则库目录")
-            ]
-            
-            missing_paths = []
-            for path, name in required_paths:
-                try:
-                    path.mkdir(parents=True, exist_ok=True)
-                except Exception as create_error:
-                    print(f"\033[1;31m[目录创建失败] {path}: {str(create_error)}\033[0m")
-                    sys.exit(103)
-                if not path.exists():
-                    missing_paths.append(f"{name}: {path}")
-            
-            if missing_paths:
-                error_msg = f"\033[1;31m[安全启动失败] 关键目录缺失:\n" + "\n".join(missing_paths) + "\033[0m"
-                print(error_msg)
-                sys.exit(101)
+            self.path_conf = r"C:/ProgramData/PYAS"
+            self.path_pyas = sys.argv[0].replace("\\", "/")
+            self.path_dirs = os.path.dirname(self.path_pyas)
+            self.file_conf = os.path.join(self.path_conf, "PYAS.json")
+            self.path_model = os.path.join(self.path_dirs, "Engine/Model")
+            self.path_rules = os.path.join(self.path_dirs, "Engine/Rules")
+            self.path_driver = os.path.join(self.path_dirs, "Driver/Protect")
         except Exception as e:
-            print(f"\033[1;31m[配置初始化错误] {str(e)}\033[0m")
-            sys.exit(102)
+            print(e)
 
     def reset_options(self): # 重置所有設定
         if self.question_event("您確定要重置所有設定嗎?"):
@@ -213,18 +175,12 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
 
     def init_config_boot(self): # 初始化引導
         try:
-            # 仅在管理员权限下尝试读取物理驱动
-            if ctypes.windll.shell32.IsUserAnAdmin():
-                with open(r"\\.\PhysicalDrive0", "r+b") as f:
-                    self.mbr_value = f.read(512)
-                if self.mbr_value[510:512] != b'\x55\xAA':
-                    self.mbr_value = None
-            else:
-                print(f"\033[33m[权限提示] 需要管理员权限才能读取物理驱动\033[0m")
+            with open(r"\\.\PhysicalDrive0", "r+b") as f:
+                self.mbr_value = f.read(512)
+            if self.mbr_value[510:512] != b'\x55\xAA':
                 self.mbr_value = None
         except Exception as e:
-            print(f"\033[33m[启动提示] 物理驱动访问受限: {e}\033[0m")
-            self.mbr_value = None
+            print(e)
 
     def init_config_list(self): # 初始化列表
         try:
@@ -251,21 +207,28 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         except Exception as e:
             print(e)
 
-        try:
-            # Initialize new scanning engines here
-            self.new_engine = NewScanEngine()
-            # Add other engines as they are integrated
-            self.all_engines = [self.model, self.rules, self.new_engine]
-            self.default_engines = [self.model, self.rules] # Define default engines
-            self.extended_engines = [self.new_engine] # Define extended engines
-        except Exception as e:
-            print(f"[引擎初始化错误] {e}")
-
     def init_config_icon(self): # 初始化圖標
         self.tray_icon = QSystemTrayIcon(self)
-        self.tray_icon.activated.connect(self.init_config_show)
+        self.tray_icon.activated.connect(self.on_tray_icon_activated)
         self.tray_icon.setIcon(QFileIconProvider().icon(QFileInfo(self.path_pyas)))
+
+        # 创建系统托盘菜单
+        tray_menu = QMenu()
+        open_action = QAction(self.trans("打开主界面"), self)
+        exit_action = QAction(self.trans("退出"), self)
+
+        open_action.triggered.connect(self.init_config_show)
+        exit_action.triggered.connect(self.quit_application)
+
+        tray_menu.addAction(open_action)
+        tray_menu.addAction(exit_action)
+
+        self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.show()
+
+    def on_tray_icon_activated(self, reason): # 处理系统托盘图标激活事件
+        if reason == QSystemTrayIcon.Trigger or reason == QSystemTrayIcon.DoubleClick:
+            self.init_config_show() # 双击或单击显示主界面
 
     def init_config_qtui(self): # 初始化介面
         self.ui = Ui_MainWindow()
@@ -273,16 +236,6 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         self.Process_sim = QStringListModel()
         self.Process_Timer = QTimer()
         self.Process_Timer.timeout.connect(self.process_list)
-
-        # Add rounded corners
-        self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setStyleSheet("""
-            QMainWindow {
-                border-radius: 10px;
-            }
-        """)
-
         self.ui.widget_2.lower()
         self.ui.Navigation_Bar.raise_()
         self.ui.Window_widget.raise_()
@@ -313,8 +266,7 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         self.ui.About_widget.hide()
         self.ui.State_output.style().polish(self.ui.State_output.verticalScrollBar())
         self.ui.Virus_Scan_output.style().polish(self.ui.Virus_Scan_output.verticalScrollBar())
-        self.ui.License_terms.setText('''MIT License\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.''')}]}}}
-
+        self.ui.License_terms.setText('''MIT License\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.''')
 
     def init_config_conn(self): # 初始化交互
         self.ui.Close_Button.clicked.connect(self.close)
@@ -450,7 +402,7 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         self.ui.Core_Made_title.setText(self.trans("核心製作:"))
         self.ui.Core_Made_Name.setText(self.trans("87owo"))
         self.ui.Testers_title.setText(self.trans("特別感謝:"))
-        self.ui.Testers_Name.setText(self.trans("0sha0"))
+        self.ui.Testers_Name.setText(self.trans("SYSTEM-WIN-ZDY"))
         self.ui.PYAS_URL_title.setText(self.trans("官方網站:"))
         self.ui.PYAS_URL.setText(self.trans("<html><head/><body><p><a href=\"https://github.com/87owo/PYAS\"><span style=\" text-decoration: underline; color:#000000;\">https://github.com/87owo/PYAS</span></a></p></body></html>"))
         self.ui.high_sensitivity_title.setText(self.trans("高靈敏度模式"))
@@ -468,13 +420,12 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         self.ui.Add_White_list_Button_3.setText(self.trans("移除"))
         self.ui.Theme_title.setText(self.trans("顯色主題"))
         self.ui.Theme_illustrate.setText(self.trans("請選擇主題"))
-        self.ui.Theme_Customize.setText(self.trans("自訂主題"))
+        self.ui.Theme_Customize.setText(self.trans("自訂义主題"))
         self.ui.Theme_White.setText(self.trans("白色主題"))
         self.ui.Theme_Yellow.setText(self.trans("黃色主題"))
         self.ui.Theme_Red.setText(self.trans("紅色主題"))
         self.ui.Theme_Green.setText(self.trans("綠色主題"))
         self.ui.Theme_Blue.setText(self.trans("藍色主題"))
-        self.ui.Theme_Dark.setText(self.trans("暗色主題"))
         self.ui.Language_title.setText(self.trans("顯示語言"))
         self.ui.Language_illustrate.setText(self.trans("請選擇語言"))
         self.ui.License_terms_title.setText(self.trans("許可條款:"))
@@ -491,7 +442,6 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         "widget_style": "background-color:rgb(255,255,255);",
         "window_style": "background-color:rgb(245,245,245);",
         "navigation_style": "background-color:rgb(235,235,235);"},#
-        
         "Red": {"color": "Red", "icon": ":/icon/Check.png",
         "button_on": """QPushButton{border:none;
         background-color:rgb(250,200,200);border-radius: 10px;}
@@ -546,8 +496,6 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
                 self.ui.Theme_Yellow.setChecked(True)
             elif self.config_json["theme_color"] == "Blue":
                 self.ui.Theme_Blue.setChecked(True)
-            elif self.config_json["theme_color"] == "Dark":
-                self.ui.Theme_Dark.setChecked(True)
             elif os.path.exists(self.config_json["theme_color"]):
                 self.ui.Theme_Customize.setChecked(True)
             self.init_change_color()
@@ -566,8 +514,6 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
                 self.config_json["theme_color"] = "Blue"
             elif self.ui.Theme_Yellow.isChecked():
                 self.config_json["theme_color"] = "Yellow"
-            elif self.ui.Theme_Dark.isChecked():
-                self.config_json["theme_color"] = "Dark"
             elif self.ui.Theme_Customize.isChecked():
                 self.config_json["theme_color"] = "Customize"
             self.init_change_color()
@@ -577,7 +523,6 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
 
     def init_change_color(self): # 變更色彩
         try:
-            # 确保主题设置正确
             if self.config_json["theme_color"] in self.config_theme:
                 self.theme = self.config_theme[self.config_json["theme_color"]]
                 self.config_json["theme_color"] = self.theme["color"]
@@ -601,75 +546,52 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
             self.ui.Setting_widget.setStyleSheet(self.theme["widget_style"])
             self.ui.About_widget.setStyleSheet(self.theme["widget_style"])
             self.ui.widget_2.setStyleSheet(self.theme["widget_style"])
-            
-            # 如果是暗色主题，为所有控件设置适当的样式
-
-            # 设置所有常规按钮的样式
-            buttons_style = {
-                'Virus_Scan_choose_Button': 'button_on',
-                'Add_White_list_Button': 'button_off',
-                'Add_White_list_Button_3': 'button_off',
-                'System_Process_Manage_Button': 'button_off',
-                'Repair_System_Files_Button': 'button_off',
-                'Clean_System_Files_Button': 'button_off',
-                'Reset_Options_Button': 'button_off',
-                'Window_Block_Button': 'button_off',
-                'Window_Block_Button_2': 'button_off',
-                'Repair_System_Network_Button': 'button_off'
-            }
-            
-            for button_name, style in buttons_style.items():
-                try:
-                    if hasattr(self.ui, button_name):
-                        button = getattr(self.ui, button_name)
-                        if button:
-                            button.setStyleSheet(self.theme[style])
-                except Exception as e:
-                    print(f"Error setting {button_name} style: {e}")
-            # 设置剩余的开关按钮样式
-            remaining_switch_buttons = [
-                'Protection_switch_Button',
-                'Protection_switch_Button_2'
-            ]
-            
-            for button_name in remaining_switch_buttons:
-                try:
-                    if hasattr(self.ui, button_name):
-                        button = getattr(self.ui, button_name)
-                        if button and button.text() == self.trans("已開啟"):
-                            button.setStyleSheet(self.theme["button_on"])
-                        else:
-                            button.setStyleSheet(self.theme["button_off"])
-                except Exception as e:
-                    print(f"Error setting {button_name} style: {e}")
-            try:
-                if hasattr(self.ui, 'Protection_switch_Button_3') and self.ui.Protection_switch_Button_3:
-                    if self.ui.Protection_switch_Button_3.text() == self.trans("已開啟"):
-                        self.ui.Protection_switch_Button_3.setStyleSheet(self.theme["button_on"])
-                    else:
-                        self.ui.Protection_switch_Button_3.setStyleSheet(self.theme["button_off"])
-            except Exception as e:
-                print(f"Error setting Protection_switch_Button_3 style: {e}")
-            # 设置所有开关按钮的样式
-            switch_buttons = [
-                'Protection_switch_Button_4',
-                'Protection_switch_Button_5',
-                'Protection_switch_Button_8',
-                'high_sensitivity_switch_Button',
-                'extension_kit_switch_Button',
-                'cloud_services_switch_Button'
-            ]
-            
-            for button_name in switch_buttons:
-                try:
-                    if hasattr(self.ui, button_name):
-                        button = getattr(self.ui, button_name)
-                        if button and button.text() == self.trans("已開啟"):
-                            button.setStyleSheet(self.theme["button_on"])
-                        else:
-                            button.setStyleSheet(self.theme["button_off"])
-                except Exception as e:
-                    print(f"Error setting {button_name} style: {e}")
+            self.ui.Virus_Scan_choose_Button.setStyleSheet(self.theme["button_on"])
+            self.ui.Add_White_list_Button.setStyleSheet(self.theme["button_off"])
+            self.ui.Add_White_list_Button_3.setStyleSheet(self.theme["button_off"])
+            self.ui.System_Process_Manage_Button.setStyleSheet(self.theme["button_off"])
+            self.ui.Repair_System_Files_Button.setStyleSheet(self.theme["button_off"])
+            self.ui.Clean_System_Files_Button.setStyleSheet(self.theme["button_off"])
+            self.ui.Reset_Options_Button.setStyleSheet(self.theme["button_off"])
+            self.ui.Window_Block_Button.setStyleSheet(self.theme["button_off"])
+            self.ui.Window_Block_Button_2.setStyleSheet(self.theme["button_off"])
+            self.ui.Repair_System_Network_Button.setStyleSheet(self.theme["button_off"])
+            if self.ui.Protection_switch_Button.text() == self.trans("已開啟"):
+                self.ui.Protection_switch_Button.setStyleSheet(self.theme["button_on"])
+            else:
+                self.ui.Protection_switch_Button.setStyleSheet(self.theme["button_off"])
+            if self.ui.Protection_switch_Button_2.text() == self.trans("已開啟"):
+                self.ui.Protection_switch_Button_2.setStyleSheet(self.theme["button_on"])
+            else:
+                self.ui.Protection_switch_Button_2.setStyleSheet(self.theme["button_off"])
+            if self.ui.Protection_switch_Button_3.text() == self.trans("已開啟"):
+                self.ui.Protection_switch_Button_3.setStyleSheet(self.theme["button_on"])
+            else:
+                self.ui.Protection_switch_Button_3.setStyleSheet(self.theme["button_off"])
+            if self.ui.Protection_switch_Button_4.text() == self.trans("已開啟"):
+                self.ui.Protection_switch_Button_4.setStyleSheet(self.theme["button_on"])
+            else:
+                self.ui.Protection_switch_Button_4.setStyleSheet(self.theme["button_off"])
+            if self.ui.Protection_switch_Button_5.text() == self.trans("已開啟"):
+                self.ui.Protection_switch_Button_5.setStyleSheet(self.theme["button_on"])
+            else:
+                self.ui.Protection_switch_Button_5.setStyleSheet(self.theme["button_off"])
+            if self.ui.Protection_switch_Button_8.text() == self.trans("已開啟"):
+                self.ui.Protection_switch_Button_8.setStyleSheet(self.theme["button_on"])
+            else:
+                self.ui.Protection_switch_Button_8.setStyleSheet(self.theme["button_off"])
+            if self.ui.high_sensitivity_switch_Button.text() == self.trans("已開啟"):
+                self.ui.high_sensitivity_switch_Button.setStyleSheet(self.theme["button_on"])
+            else:
+                self.ui.high_sensitivity_switch_Button.setStyleSheet(self.theme["button_off"])
+            if self.ui.extension_kit_switch_Button.text() == self.trans("已開啟"):
+                self.ui.extension_kit_switch_Button.setStyleSheet(self.theme["button_on"])
+            else:
+                self.ui.extension_kit_switch_Button.setStyleSheet(self.theme["button_off"])
+            if self.ui.cloud_services_switch_Button.text() == self.trans("已開啟"):
+                self.ui.cloud_services_switch_Button.setStyleSheet(self.theme["button_on"])
+            else:
+                self.ui.cloud_services_switch_Button.setStyleSheet(self.theme["button_off"])
         except Exception as e:
             print(e)
             self.config_json["theme_color"] = "White"
@@ -1000,13 +922,15 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
             return True, 0
         return super(MainWindow_Controller, self).nativeEvent(eventType, message)
 
-    def closeEvent(self, event): # 退出程序
+    def closeEvent(self, event): # 拦截关闭事件，最小化到系统托盘
+        event.ignore()
+        self.hide()
+
+    def quit_application(self): # 真正的退出应用
         if self.question_event("您確定要退出 PYAS 和所有防護嗎?"):
             self.init_config_write(self.config_json)
             self.clean_function()
-            event.accept()
-        else:
-            event.ignore()
+            QApplication.quit()
 
     def show_menu(self): # 功能選單
         #self.WindowMenu = QMenu()
@@ -1443,408 +1367,40 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
             self.virus_scan_break()
 
     def traverse_path(self, file_path): # 遍歷路徑
-        try:
-            # 创建线程池
-            max_workers = min(32, os.cpu_count() * 4)
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = []
-                total_files = 0
-                scanned_files = 0
-                
-                # 定义可疑文件扩展名
-                suspicious_extensions = {
-                    # 可执行文件
-                    '.exe', '.dll', '.sys', '.scr', '.com', '.ocx', '.cpl', '.drv',
-                    # 脚本文件
-                    '.vbs', '.js', '.ps1', '.bat', '.cmd', '.hta', '.wsf', '.jse',
-                    # 安装包
-                    '.msi', '.msp', '.msix', '.msu', '.appx', '.appxbundle',
-                    # 压缩文件
-                    '.zip', '.rar', '.7z', '.gz', '.cab', '.iso', '.img',
-                    # Office文档
-                    '.doc', '.docm', '.xls', '.xlsm', '.ppt', '.pptm', '.dotm',
-                    # 其他高风险文件
-                    '.jar', '.jnlp', '.gadget', '.inf', '.reg', '.lnk', '.pif'
-                }
-                
-                # 系统目录白名单
-                system_dirs = {
-                    'windows\\winsxs',
-                    'windows\\installer',
-                    'windows\\servicing',
-                    'windows\\system32\\catroot',
-                    'windows\\system32\\driverstore',
-                    'programdata\\microsoft',
-                    '$recycle.bin',
-                    'system volume information',
-                    'windows\\csc',
-                    'windows\\logs',
-                    'windows\\infusedapps'
-                }
-                
-                for root, dirs, files in os.walk(file_path):
-                    if self.scan_file == False:
-                        break
-                        
-                    # 跳过系统目录
-                    if any(sys_dir in root.lower() for sys_dir in system_dirs):
-                        continue
-                        
-                    # 更新总文件数
-                    total_files = len(files)
-                    
-                    for file in files:
-                        if self.scan_file == False:
-                            break
-                            
-                        try:
-                            file_path = os.path.join(root, file).replace("\\", "/")
-                            
-                            # 检查白名单
-                            if self.check_whitelist(file_path):
-                                continue
-                                
-                            # 检查文件扩展名
-                            ext = os.path.splitext(file)[1].lower()
-                            if ext not in suspicious_extensions:
-                                continue
-                                
-                            # 检查文件大小和访问权限
-                            try:
-                                file_size = os.path.getsize(file_path)
-                                if file_size == 0 or file_size > 100 * 1024 * 1024:  # 跳过空文件和大于100MB的文件
-                                    continue
-                                    
-                                # 检查文件是否可访问
-                                with open(file_path, 'rb') as f:
-                                    f.read(1)
-                                    
-                            except (IOError, PermissionError) as e:
-                                print(f"File access error {file_path}: {e}")
-                                continue
-                                
-                            # 提交扫描任务
-                            future = executor.submit(self.scan_file_task, file_path)
-                            futures.append(future)
-                            
-                            # 更新扫描状态
-                            scanned_files += 1
-                            progress = (scanned_files / max(1, total_files)) * 100
-                            
-                            # 更新界面
-                            QMetaObject.invokeMethod(self.ui.Virus_Scan_title, "setText",
-                                Qt.QueuedConnection,
-                                Q_ARG(str, self.trans(f"正在掃描 ({progress:.1f}%)")))
-                            QMetaObject.invokeMethod(self.ui.Virus_Scan_text, "setText",
-                                Qt.QueuedConnection,
-                                Q_ARG(str, f"掃描文件: {file_path}\n已掃描: {scanned_files}/{total_files}"))
-                            
-                            self.total_scan += 1
-                            
-                        except Exception as e:
-                            print(f"Error processing {file}: {e}")
-                            continue
-                
-                # 等待所有扫描任务完成
-                for future in as_completed(futures):
-                    if self.scan_file == False:
-                        break
-                    try:
-                        result, file = future.result()
-                        if result:
-                            self.write_scan(result, file)
-                    except Exception as e:
-                        print(f"Scan task error: {e}")
-                        
-        except Exception as e:
-            print(f"Error in traverse_path: {e}")
-            
-        finally:
-            # 确保扫描完成后更新界面
-            if self.scan_file:
-                QMetaObject.invokeMethod(self.ui.Virus_Scan_title, "setText",
-                    Qt.QueuedConnection,
-                    Q_ARG(str, self.trans("掃描完成")))
-                QMetaObject.invokeMethod(self.ui.Virus_Scan_text, "setText",
-                    Qt.QueuedConnection,
-                    Q_ARG(str, f"共掃描文件: {self.total_scan}"))
-
-    def scan_file_task(self, file):
-        """单个文件扫描任务"""
-        try:
-            # 文件大小检查
-            if os.path.getsize(file) > 100 * 1024 * 1024:  # 跳过大于100MB的文件
-                return None, file
-            
-            # 调用扫描引擎
-            result = self.start_scan(file)
-            return result, file
-        except Exception as e:
-            print(f"Error scanning {file}: {e}")
-            return None, file
+        for fd in os.listdir(file_path):
+            try:
+                file = str(os.path.join(file_path,fd)).replace("\\", "/")
+                if self.scan_file == False:
+                    break
+                elif os.path.isdir(file):
+                    self.traverse_path(file)
+                elif not self.check_whitelist(file):
+                    QMetaObject.invokeMethod(self.ui.Virus_Scan_title, "setText",
+                    Qt.QueuedConnection, Q_ARG(str, self.trans("正在掃描")))
+                    QMetaObject.invokeMethod(self.ui.Virus_Scan_text, "setText",
+                    Qt.QueuedConnection, Q_ARG(str, file))
+                    self.write_scan(self.start_scan(file), file)
+                    self.total_scan += 1
+            except:
+                pass
 
     def start_scan(self, file): # 調用掃描引擎
         try:
-            # 基本文件检查
-            try:
-                if os.path.getsize(file) == 0:  # 跳过空文件
-                    return False
-                
-                # 读取文件头部进行快速检查
-                with open(file, 'rb') as f:
-                    header = f.read(8192)  # 读取前8KB进行初步分析
-                    
-                    # 检查是否为可执行文件
-                    if header.startswith(b'MZ'):
-                        # 深度扫描PE文件
-                        return self._scan_pe_file(file, header)
-                    
-                    # 检查脚本文件
-                    if any(file.lower().endswith(ext) for ext in ('.vbs','.js','.ps1','.bat','.cmd','.jse','.wsf','.psm1')):
-                        # 扫描脚本文件内容
-                        return self._scan_script_file(file)
-                        
-                    # 检查Office文档
-                    if any(file.lower().endswith(ext) for ext in ('.doc','.docm','.xls','.xlsm','.ppt','.pptm','.dotm')):
-                        # 扫描Office文档
-                        return self._scan_office_file(file)
-            except Exception as e:
-                print(f"Basic file check error: {e}")
-            
-            # AI模型扫描
-            try:
-                label, level = self.model.dl_scan(file)
-                if label:
-                    if self.config_json["sensitivity"]:
-                        return f"{label}.{level}"
-                    elif level >= self.model.values:
-                        return f"{label}.{level}"
-            except Exception as e:
-                print(f"AI scan error: {e}")
-            
-            # 规则扫描
+            label, level = self.model.dl_scan(file)
+            if label and self.config_json["sensitivity"]:
+                return f"{label}.{level}"
+            elif label and level >= self.model.values:
+                return f"{label}.{level}"
+        except Exception as e:
+            print(e)
+        try:
             if self.config_json["extend_mode"]:
-                try:
-                    label, level = self.rules.yr_scan(file)
-                    if label and isinstance(level, str):
-                        return f"{label}.{level}"
-                except Exception as e:
-                    print(f"Rule scan error: {e}")
-            
-            return False
-            
+                label, level = self.rules.yr_scan(file)
+                if label and isinstance(level, str):
+                    return f"{label}.{level}"
         except Exception as e:
-            print(f"Global scan error: {e}")
-            return False
-            
-    def _scan_pe_file(self, file, header):
-        """深度扫描PE文件"""
-        try:
-            # 计算文件哈希
-            file_hash = self._calculate_file_hash(file)
-            
-            # 检查是否为已知恶意软件哈希
-            if self._check_malware_hash(file_hash):
-                return "KnownMalware.High"
-            
-            # 检查是否带有数字签名
-            try:
-                import win32api
-                import win32security
-                try:
-                    res = win32api.GetFileVersionInfo(file, '\\')  # 检查签名
-                    if not res:
-                        return "Unsigned.Medium"
-                except:
-                    pass
-            except ImportError:
-                pass
-            
-            # 检查PE文件特征
-            try:
-                # 检查PE头
-                if len(header) < 64:
-                    return "InvalidPE.High"
-                    
-                e_lfanew = struct.unpack('<I', header[0x3C:0x40])[0]
-                if e_lfanew > len(header):
-                    return "CorruptedPE.High"
-                    
-                # 检查节表特征
-                suspicious_sections = [b'.text', b'.data', b'.rdata', b'.idata']  # 常见节名
-                if not any(section in header for section in suspicious_sections):
-                    return "Suspicious.High"
-                    
-                # 检查导入表特征
-                suspicious_imports = [b'WinExec', b'CreateProcess', b'VirtualAlloc', b'WriteProcessMemory']
-                if any(imp in header for imp in suspicious_imports):
-                    return "SuspiciousImports.High"
-                
-                # 检查资源加密和壳
-                packers = [b'UPX', b'ASPack', b'PECompact', b'FSG', b'MEW', b'ASPR']
-                if any(packer in header for packer in packers):
-                    return "Packed.Medium"
-                    
-                # 检查异常入口点
-                if e_lfanew + 24 < len(header):
-                    entry_point = struct.unpack('<I', header[e_lfanew+24:e_lfanew+28])[0]
-                    if entry_point < 0x1000 or entry_point > 0x10000000:
-                        return "SuspiciousEntryPoint.High"
-                
-                # 计算文件熵值
-                entropy = self._calculate_entropy(header)
-                if entropy > 7.0:  # 高熵值通常表示加密或压缩
-                    return "HighEntropy.Medium"
-                
-            except Exception as e:
-                print(f"PE analysis error: {e}")
-                return "AnalysisError.Low"
-            
-            return False
-            
-        except Exception as e:
-            print(f"PE scan error: {e}")
-            return False
-            
-    def _calculate_file_hash(self, file):
-        """计算文件SHA256哈希值"""
-        try:
-            sha256_hash = hashlib.sha256()
-            with open(file, "rb") as f:
-                for chunk in iter(lambda: f.read(4096), b""):
-                    sha256_hash.update(chunk)
-            return sha256_hash.hexdigest()
-        except Exception as e:
-            print(f"Hash calculation error: {e}")
-            return None
-            
-    def _check_malware_hash(self, file_hash):
-        """检查是否为已知恶意软件哈希"""
-        try:
-            # 这里可以添加已知恶意软件哈希库的检查
-            known_malware_hashes = [
-                # 示例哈希值，实际使用时需要更新为真实的恶意软件哈希库
-                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-            ]
-            return file_hash in known_malware_hashes
-        except Exception as e:
-            print(f"Hash check error: {e}")
-            return False
-            
-    def _calculate_entropy(self, data):
-        """计算数据的熵值"""
-        try:
-            if not data:
-                return 0.0
-            entropy = 0.0
-            for x in range(256):
-                p_x = float(data.count(bytes([x]))) / len(data)
-                if p_x > 0:
-                    entropy += - p_x * math.log(p_x, 2)
-            return entropy
-        except Exception as e:
-            print(f"Entropy calculation error: {e}")
-            return 0.0
-            
-    def _scan_script_file(self, file):
-        """扫描脚本文件内容"""
-        try:
-            with open(file, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read().lower()
-                
-            # 检查危险命令
-            dangerous_commands = {
-                # PowerShell危险命令
-                'powershell -e': 'PowerShell.Encoded',
-                'invoke-expression': 'PowerShell.IEX',
-                'invoke-webrequest': 'PowerShell.Download',
-                'downloadstring': 'PowerShell.Download',
-                'start-process': 'PowerShell.Execute',
-                'new-object': 'PowerShell.Object',
-                
-                # WSH危险API
-                'wscript.shell': 'WSH.Shell',
-                'shell.application': 'WSH.Shell',
-                'createobject': 'WSH.Object',
-                'getobject': 'WSH.Object',
-                
-                # 系统命令
-                'cmd.exe': 'System.CMD',
-                'system32': 'System.Path',
-                'net user': 'System.User',
-                'net localgroup': 'System.Group',
-                
-                # 注册表操作
-                'reg delete': 'Registry.Delete',
-                'reg add': 'Registry.Add',
-                'regwrite': 'Registry.Write',
-                
-                # 文件操作
-                'deletefile': 'File.Delete',
-                'copyfile': 'File.Copy',
-                'movefile': 'File.Move',
-                
-                # 网络操作
-                'urldownloadtofile': 'Network.Download',
-                'msxml2.xmlhttp': 'Network.HTTP',
-                'winhttp.winhttprequest': 'Network.HTTP',
-                
-                # 进程操作
-                'createprocess': 'Process.Create',
-                'shellexecute': 'Process.Shell',
-                'taskkill': 'Process.Kill'
-            }
-            
-            # 检查混淆特征
-            obfuscation_patterns = [
-                r'\\x[0-9a-f]{2}',  # 十六进制编码
-                r'chr\([0-9]+\)',   # ASCII字符转换
-                r'base64',          # Base64编码
-                r'\^[0-9a-f]{2}',   # 异或编码
-                r'\\u[0-9a-f]{4}'  # Unicode编码
-            ]
-            
-            # 检查危险函数调用
-            threats = []
-            
-            # 检查命令执行
-            for cmd, threat_type in dangerous_commands.items():
-                if cmd in content:
-                    threats.append(threat_type)
-            
-            # 检查混淆
-            for pattern in obfuscation_patterns:
-                if re.search(pattern, content):
-                    threats.append('Obfuscation.High')
-                    break
-            
-            # 检查敏感字符串
-            if 'password' in content or 'credentials' in content:
-                threats.append('Sensitive.Medium')
-            
-            # 检查自删除行为
-            if any(keyword in content for keyword in ['del', 'erase', 'remove']):
-                if os.path.basename(file).lower() in content:
-                    threats.append('SelfDelete.High')
-            
-            # 检查持久化行为
-            persistence_locations = [
-                'run\\', 'runonce',
-                'startup', 'schedule',
-                'windows\\tasks'
-            ]
-            if any(loc in content for loc in persistence_locations):
-                threats.append('Persistence.High')
-            
-            # 返回检测结果
-            if threats:
-                return f"{'.'.join(threats[:3])}.High"  # 最多返回前3个威胁
-            
-            return False
-            
-        except Exception as e:
-            print(f"Script scan error: {e}")
-            return False
+            print(e)
+        return False
 
     def repair_system(self): # 修復系統
         try:
@@ -1989,43 +1545,15 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
                 continue
 
     def protect_proc_thread(self): # 進程防護
-        # 系统进程白名单
-        system_procs = {
-            'conhost.exe', 'tasklist.exe', 'taskkill.exe',
-            'svchost.exe', 'explorer.exe', 'dwm.exe',
-            'ctfmon.exe', 'winlogon.exe', 'services.exe',
-            'lsass.exe', 'csrss.exe', 'smss.exe',
-            'wininit.exe', 'spoolsv.exe', 'rundll32.exe',
-            'wmiprvse.exe', 'msmpeng.exe', 'dllhost.exe',
-            'sihost.exe', 'searchindexer.exe', 'taskhostw.exe',
-            'backgroundtaskhost.exe', 'runtimebroker.exe',
-            'dllhost.exe', 'sihost.exe', 'fontdrvhost.exe'
-        }
-        
         while self.config_json["proc_protect"]:
             try:
-                time.sleep(0.5)  # 降低扫描频率减少误报
+                time.sleep(0.1)
                 new_process = self.get_process_list()
                 for pid in new_process - self.exist_process:
-                    # 获取进程文件路径
-                    h_process = self.kernel32.OpenProcess(0x1F0FFF, False, pid)
-                    file = self.get_process_file(h_process).replace("\\", "/")
-                    self.kernel32.CloseHandle(h_process)
-                    
-                    # 检查是否为系统进程
-                    proc_name = os.path.basename(file).lower()
-                    if proc_name in system_procs or self.check_whitelist(file):
-                        continue
-                        
-                    # 调用扫描引擎检查进程文件
-                    result = self.start_scan(file)
-                    if result:
-                        self.write_scan(result, file)
-                        
+                    self.handle_new_process(pid)
                 self.exist_process = new_process
             except Exception as e:
-                print(f"Process protection error: {e}")
-                
+                print(e)
         if self.ui.Protection_switch_Button.text() == self.trans("已開啟"):
             if not self.first_startup:
                 self.send_notify(self.trans(f"竄改警告: self.proc_protect"), False)
