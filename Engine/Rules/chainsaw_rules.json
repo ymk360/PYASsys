@@ -1,0 +1,135 @@
+{
+  "parser_rules": {
+    "windows_event": {
+      "format": "evtx",
+      "fields": ["EventID", "TimeCreated", "Provider", "Channel", "Computer", "Security", "EventData"],
+      "timestamp_field": "TimeCreated"
+    },
+    "sysmon": {
+      "format": "evtx",
+      "channel": "Microsoft-Windows-Sysmon/Operational",
+      "fields": ["EventID", "TimeCreated", "Provider", "Channel", "Computer", "Security", "EventData"],
+      "timestamp_field": "TimeCreated"
+    },
+    "firewall": {
+      "format": "log",
+      "pattern": "^(.+?)\\s+(.+?)\\s+(ALLOW|DROP|BLOCK)\\s+(.+?)\\s+(.+?)\\s+(.+?)$",
+      "fields": ["timestamp", "action", "protocol", "src_ip", "dst_ip", "port"],
+      "timestamp_field": "timestamp"
+    },
+    "apache": {
+      "format": "log",
+      "pattern": "^(.+?)\\s+\\[(.+?)\\]\\s+\"(.+?)\"\\s+(\\d+)\\s+(\\d+)$",
+      "fields": ["client_ip", "timestamp", "request", "status_code", "bytes"],
+      "timestamp_field": "timestamp"
+    },
+    "iis": {
+      "format": "log",
+      "pattern": "^(.+?)\\s+(.+?)\\s+(.+?)\\s+(.+?)\\s+(.+?)\\s+(.+?)\\s+(.+?)\\s+(.+?)\\s+(.+?)\\s+(.+?)$",
+      "fields": ["date", "time", "s_ip", "cs_method", "cs_uri_stem", "cs_uri_query", "s_port", "cs_username", "c_ip", "sc_status"],
+      "timestamp_fields": ["date", "time"]
+    }
+  },
+  "detection_rules": {
+    "suspicious_powershell": {
+      "description": "可疑的PowerShell命令执行",
+      "pattern": {
+        "EventID": "4688",
+        "CommandLine": "regex:.*powershell.*(-e|-enc|-encodedcommand|frombase64string|downloadstring|downloadfile|webclient|invoke-expression|iex).*"
+      },
+      "severity": "高",
+      "mitre_tactic": "执行",
+      "mitre_technique": "T1059.001"
+    },
+    "credential_dumping": {
+      "description": "凭据转储活动",
+      "pattern": {
+        "EventID": "4688",
+        "CommandLine": "regex:.*(mimikatz|sekurlsa|kerberos|lsadump|vaultcred|dpapi|privilege::debug).*"
+      },
+      "severity": "高",
+      "mitre_tactic": "凭据访问",
+      "mitre_technique": "T1003"
+    },
+    "suspicious_service": {
+      "description": "可疑服务创建",
+      "pattern": {
+        "EventID": "7045",
+        "ServiceName": "regex:.*svc[0-9]+.*"
+      },
+      "severity": "中",
+      "mitre_tactic": "持久化",
+      "mitre_technique": "T1543.003"
+    },
+    "multiple_failed_logins": {
+      "description": "多次登录失败",
+      "pattern": {
+        "EventID": "4625"
+      },
+      "threshold": {
+        "field": "TargetUserName",
+        "count": 5,
+        "timeframe": "5m"
+      },
+      "severity": "中",
+      "mitre_tactic": "凭据访问",
+      "mitre_technique": "T1110"
+    },
+    "admin_group_modification": {
+      "description": "管理员组成员修改",
+      "pattern": {
+        "EventID": "4732",
+        "TargetUserName": "Administrators"
+      },
+      "severity": "高",
+      "mitre_tactic": "权限提升",
+      "mitre_technique": "T1078"
+    },
+    "suspicious_network_connection": {
+      "description": "可疑网络连接",
+      "pattern": {
+        "EventID": "3",
+        "DestinationPort": "regex:(4444|5555|6666|7777|8888|9999)"
+      },
+      "severity": "中",
+      "mitre_tactic": "命令与控制",
+      "mitre_technique": "T1071"
+    },
+    "unusual_process_network_connection": {
+      "description": "异常进程网络连接",
+      "pattern": {
+        "EventID": "3",
+        "Image": "regex:.*(calc.exe|notepad.exe|mspaint.exe|wordpad.exe).*"
+      },
+      "severity": "中",
+      "mitre_tactic": "命令与控制",
+      "mitre_technique": "T1071"
+    },
+    "suspicious_file_creation": {
+      "description": "可疑文件创建",
+      "pattern": {
+        "EventID": "11",
+        "TargetFilename": "regex:.*\\.(exe|dll|bat|ps1|vbs|js)$"
+      },
+      "severity": "低",
+      "mitre_tactic": "执行",
+      "mitre_technique": "T1204"
+    },
+    "firewall_block": {
+      "description": "防火墙阻止连接",
+      "pattern": {
+        "action": "BLOCK"
+      },
+      "severity": "低"
+    },
+    "web_shell_access": {
+      "description": "Web Shell访问尝试",
+      "pattern": {
+        "request": "regex:.*(cmd.aspx|shell.php|c99.php|r57.php|webshell|command.jsp).*"
+      },
+      "severity": "高",
+      "mitre_tactic": "初始访问",
+      "mitre_technique": "T1190"
+    }
+  }
+}

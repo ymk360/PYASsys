@@ -5,9 +5,24 @@ from PIL import Image
 # 在文件头部添加 DLL 加载路径
 import os
 import sys
+import os
+from pathlib import Path
 
-sys.path.append(r"G:\PYAS-3.3.0\Driver\Runtime")
-os.add_dll_directory(r"G:\PYAS-3.3.0\Driver\Runtime")
+# 动态获取项目根目录
+PROJECT_ROOT = Path(__file__).resolve().parent
+print(f'[调试信息] PYAS_Engine项目根目录: {PROJECT_ROOT}')
+DLL_PATH = PROJECT_ROOT / 'Driver' / 'Runtime'
+print(f'[调试信息] DLL路径: {DLL_PATH}, 存在: {DLL_PATH.exists()}')
+
+# 安全添加DLL目录
+try:
+    if not DLL_PATH.exists():
+        raise FileNotFoundError(f'安全运行时目录缺失: {DLL_PATH}')
+    os.add_dll_directory(str(DLL_PATH))
+except Exception as e:
+    print(f'[安全启动异常] {str(e)}')
+    sys.exit(101)
+# 已通过动态路径解析添加DLL目录，无需硬编码路径
 
 class YRScan:
     def __init__(self):
