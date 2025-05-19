@@ -1,14 +1,28 @@
 import os, sys, time, json, numpy
+import os, sys, time, json, numpy
 import ctypes
 
-# Explicitly load libyara.dll
+# Construct the path to libyara.dll within the project's Driver directory
+# Assuming PYAS_Engine.py is in the Engine directory, two levels up from Driver
+current_dir = os.path.dirname(__file__)
+project_root = os.path.dirname(current_dir)
+libyara_path = os.path.join(project_root, 'Driver', 'Protect', 'libyara.dll') # Adjust path if needed
+
 try:
-    libyara_path = os.path.join(sys.prefix, 'DLLs', 'libyara.dll')
-    ctypes.WinDLL(libyara_path)
-except OSError:
-    # Handle the case where the DLL is not in the default location
-    # You might need to add more search paths here
+    # Attempt to load the DLL explicitly before importing yara
+    ctypes.CDLL(libyara_path)
+except OSError as e:
+    print(f"Error loading libyara.dll: {e}")
+    print(f"Attempted path: {libyara_path}")
+    # Depending on requirements, you might want to exit or disable Yara functionality
+    # For now, we'll just print the error and continue, which might lead to import errors later
     pass
+
+import yara
+
+import chardet, pefile, onnxruntime
+from PIL import Image
+import os
 
 
 import chardet, pefile, onnxruntime

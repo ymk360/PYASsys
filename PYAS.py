@@ -1,5 +1,5 @@
 from cmath import e
-import os, gc, sys, time, json
+import os, gc, sys, time, json, atexit
 import ctypes, ctypes.wintypes
 from PYAS_Engine import YRScan, DLScan
 from PYAS_Suffixes import file_types
@@ -10,6 +10,7 @@ from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 from subprocess import *
 from threading import *
+from Engine.PYAS_TrayMenu import create_tray_icon
 
 class PROCESSENTRY32(ctypes.Structure): # 初始化定義
     _fields_ = [
@@ -80,7 +81,6 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         self.total_scan = 0
         self.scan_time = 0
         self.virus_lock = {}
-        self.virus_list_ui = []
         self.Process_quantity = 0
         self.Process_list_all_pid = []
         self.default_json = {
@@ -175,12 +175,40 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
 
     def init_config_boot(self): # 初始化引導
         try:
-            with open(r"\\.\PhysicalDrive0", "r+b") as f:
-                self.mbr_value = f.read(512)
-            if self.mbr_value[510:512] != b'\x55\xAA':
-                self.mbr_value = None
+            # 多开检测
+            self.lock_file_path = os.path.join(self.path_conf, "PYAS.lock")
+            try:
+                self.lock_file = open(self.lock_file_path, 'x')
+            except FileExistsError:
+                print("PYAS is already running.")
+                sys.exit()
+
+            # 注册清理函数以在程序退出时删除锁文件
+            atexit.register(self._cleanup_lock_file)
+
+            # 创建隔离区目录
+            self.path_quarantine = os.path.join(self.path_conf, "Quarantine")
+            if not os.path.exists(self.path_quarantine):
+                os.makedirs(self.path_quarantine)
+
+            # with open(r"\\.\PhysicalDrive0", "r+b") as f:
+            #     self.mbr_value = f.read(512)
+            # if self.mbr_value[510:512] != b'\x55\xAA':
+            #     self.mbr_value = None
         except Exception as e:
             print(e)
+
+    def _cleanup_lock_file(self): # 清理锁文件
+        if hasattr(self, 'lock_file') and self.lock_file and hasattr(self.lock_file, 'close'):
+            try:
+                self.lock_file.close()
+            except Exception as e:
+                print(f"Error closing lock file: {e}")
+        if hasattr(self, 'lock_file_path') and os.path.exists(self.lock_file_path):
+            try:
+                os.remove(self.lock_file_path)
+            except OSError as e:
+                print(f"Error removing lock file: {e}")
 
     def init_config_list(self): # 初始化列表
         try:
@@ -207,24 +235,13 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         except Exception as e:
             print(e)
 
+    def quarantine_file(self, file_path): # 隔離文件
+        from Engine.PYAS_Quarantine import quarantine_file
+        return quarantine_file(self, file_path)
+
     def init_config_icon(self): # 初始化圖標
-        self.tray_icon = QSystemTrayIcon(self)
-        self.tray_icon.activated.connect(self.on_tray_icon_activated)
-        self.tray_icon.setIcon(QFileIconProvider().icon(QFileInfo(self.path_pyas)))
-
-        # 创建系统托盘菜单
-        tray_menu = QMenu()
-        open_action = QAction(self.trans("打开主界面"), self)
-        exit_action = QAction(self.trans("退出"), self)
-
-        open_action.triggered.connect(self.init_config_show)
-        exit_action.triggered.connect(self.quit_application)
-
-        tray_menu.addAction(open_action)
-        tray_menu.addAction(exit_action)
-
-        self.tray_icon.setContextMenu(tray_menu)
-        self.tray_icon.show()
+        # 创建系统托盘图标和菜单
+        self.tray_icon = create_tray_icon(self, self.trans)
 
     def on_tray_icon_activated(self, reason): # 处理系统托盘图标激活事件
         if reason == QSystemTrayIcon.Trigger or reason == QSystemTrayIcon.DoubleClick:
@@ -269,8 +286,8 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         self.ui.License_terms.setText('''MIT License\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.''')
 
     def init_config_conn(self): # 初始化交互
-        self.ui.Close_Button.clicked.connect(self.close)
-        self.ui.Minimize_Button.clicked.connect(self.showMinimized)
+        self.ui.Close_Button.clicked.connect(self.minimize_to_tray)
+        self.ui.Minimize_Button.clicked.connect(self.minimize_to_taskbar)
         self.ui.Menu_Button.clicked.connect(self.show_menu)
         self.ui.State_Button.clicked.connect(self.change_state_widget)
         self.ui.Tools_Button.clicked.connect(self.change_tools_widget)    
@@ -315,6 +332,46 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         self.ui.Theme_Blue.clicked.connect(self.init_change_theme)
         self.ui.Theme_Red.clicked.connect(self.init_change_theme)
 
+    def minimize_to_taskbar(self): # 最小化到任务栏
+        self.showMinimized()
+
+    def minimize_to_tray(self): # 最小化到系统托盘
+        self.hide()
+
+    def quit_application(self): # 退出应用程序
+        self.tray_icon.hide()
+        QCoreApplication.quit()
+
+    # 占位方法，用于新的系统托盘菜单项
+    def open_trust_zone(self): # 打开信任区
+        print("打开信任区")
+        from Engine.PYAS_TrustZone import TrustZoneDialog
+        trust_zone_dialog = TrustZoneDialog(self)
+        trust_zone_dialog.exec_()
+
+    def open_quarantine(self): # 打开隔离区
+        print("打开隔离区")
+        from Engine.PYAS_Quarantine import QuarantineDialog
+        quarantine_dialog = QuarantineDialog(self)
+        quarantine_dialog.exec_()
+
+    def open_security_log(self): # 打开安全日志
+        print("打开安全日志")
+        # TODO: Implement functionality to open security log
+        
+    def get_current_time(self):
+        """获取当前时间的格式化字符串"""
+        from datetime import datetime
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def check_for_updates(self): # 检查更新
+        print("检查更新")
+        # TODO: Implement functionality to check for updates
+
+    def open_security_settings(self): # 打开安全设置
+        print("打开安全设置")
+        # TODO: Implement functionality to open security settings
+
     def init_config_lang(self): # 初始化語言
         try:
             if self.config_json["language_ui"] == "zh_TW":
@@ -355,7 +412,7 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         self.ui.File_Scan_Button.setText(self.trans("檔案掃描"))
         self.ui.Path_Scan_Button.setText(self.trans("路徑掃描"))
         self.ui.Disk_Scan_Button.setText(self.trans("全盤掃描"))
-        self.ui.Virus_Scan_Solve_Button.setText(self.trans("立即刪除"))
+        self.ui.Virus_Scan_Solve_Button.setText(self.trans("立即隔離"))
         self.ui.Virus_Scan_Break_Button.setText(self.trans("停止掃描"))
         self.ui.Process_Total_title.setText(self.trans("進程總數:"))
         self.ui.Protection_title.setText(self.trans("進程防護"))
@@ -1251,22 +1308,44 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
     def virus_solve(self): # 清理病毒
         try:
             self.ui.Virus_Scan_Solve_Button.hide()
-            for file in self.virus_lock:
+            # Iterate through items in the list widget
+            files_to_process = []
+            for i in range(self.ui.Virus_Scan_output.count()):
+                item = self.ui.Virus_Scan_output.item(i)
+                file = item.data(Qt.UserRole)
+                if file and item.checkState() == Qt.Checked:
+                    files_to_process.append(file)
+
+            for file in files_to_process:
                 try:
-                    if self.ui.Virus_Scan_output.findItems(file, Qt.MatchContains)[0].checkState() == Qt.Checked:
-                        QMetaObject.invokeMethod(self.ui.Virus_Scan_title, "setText",
-                        Qt.QueuedConnection, Q_ARG(str, self.trans("正在刪除")))
-                        QMetaObject.invokeMethod(self.ui.Virus_Scan_text, "setText",
-                        Qt.QueuedConnection, Q_ARG(str, file))
-                        QApplication.processEvents()
-                        self.lock_file(file, False)
-                        self.ransom_counts = 0
-                        os.remove(file)
+                    QMetaObject.invokeMethod(self.ui.Virus_Scan_title, "setText",
+                    Qt.QueuedConnection, Q_ARG(str, self.trans("正在隔離")))
+                    QMetaObject.invokeMethod(self.ui.Virus_Scan_text, "setText",
+                    Qt.QueuedConnection, Q_ARG(str, file))
+                    QApplication.processEvents()
+
+                    # Release the lock before quarantining
+                    self.lock_file(file, False)
+                    self.ransom_counts = 0 # Reset ransom_counts if used for locking
+
+                    # 检查文件是否在信任区
+                    from Engine.PYAS_TrustZone import is_file_trusted
+                    if is_file_trusted(self, file):
+                        print(f"File in trust zone, skipping: {file}")
+                        continue
+                        
+                    quarantined_path = self.quarantine_file(file)
+                    if quarantined_path:
+                        print(f"File quarantined: {file} -> {quarantined_path}")
                     else:
-                        self.lock_file(file, False)
-                except:
+                        print(f"Failed to quarantine file: {file}")
+                except Exception as e:
+                    print(f"Error processing file {file}: {e}")
                     continue
+
+            # Clear the virus list UI and the virus_lock dictionary after processing
             self.ui.Virus_Scan_output.clear()
+            self.virus_lock.clear()
             QMetaObject.invokeMethod(self.ui.Virus_Scan_title, "setText",
             Qt.QueuedConnection, Q_ARG(str, self.trans("病毒掃描")))
             QMetaObject.invokeMethod(self.ui.Virus_Scan_text, "setText",
@@ -1278,9 +1357,9 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         try:
             if state and file:
                 self.lock_file(file, True)
-                self.virus_list_ui.append(f"[{state}] {file}")
                 item = QListWidgetItem()
                 item.setText(f"[{state}] {file}")
+                item.setData(Qt.UserRole, file) # Store original file path
                 item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
                 item.setCheckState(Qt.Checked)
                 self.ui.Virus_Scan_output.addItem(item)
@@ -1291,11 +1370,12 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
         try:
             QMetaObject.invokeMethod(self.ui.Virus_Scan_title, "setText",
             Qt.QueuedConnection, Q_ARG(str, self.trans("病毒掃描")))
-            if self.virus_list_ui:
+            virus_count = self.ui.Virus_Scan_output.count()
+            if virus_count > 0:
                 self.ui.Virus_Scan_Solve_Button.show()
                 self.ui.Virus_Scan_Break_Button.hide()
                 self.ui.Virus_Scan_choose_Button.show()
-                text = self.trans(f"當前發現 {len(self.virus_list_ui)} 個病毒")
+                text = self.trans(f"當前發現 {virus_count} 個病毒")
             else:
                 self.virus_scan_break()
                 text = self.trans("當前未發現病毒")
@@ -1692,10 +1772,14 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
                 self.repair_system_file_icon()
             except:
                 pass
-        if self.ui.Protection_switch_Button_3.text() == self.trans("已開啟"):
-            if not self.first_startup:
-                self.send_notify(self.trans(f"竄改警告: self.sys_protect (reg)"), False)
-                self.kill_process("竄改攔截", *self.track_proc)
+        try:
+            if hasattr(self, 'ui') and hasattr(self.ui, 'Protection_switch_Button_3') and \
+               self.ui.Protection_switch_Button_3.text() == self.trans("已開啟"):
+                if not self.first_startup:
+                    self.send_notify(self.trans(f"竄改警告: self.sys_protect (reg)"), False)
+                    self.kill_process("竄改攔截", *self.track_proc)
+        except:
+            pass
 
     def get_connections_list(self):  # 獲取連接列表
         try:
@@ -1730,10 +1814,14 @@ class MainWindow_Controller(QMainWindow): # 初始化主程式
                 self.exist_connections = new_connections
             except Exception as e:
                 print(e)
-        if self.ui.Protection_switch_Button_5.text() == self.trans("已開啟"):
-            if not self.first_startup:
-                self.send_notify(self.trans(f"竄改警告: self.net_protect"), False)
-                self.kill_process("竄改攔截", *self.track_proc)
+        try:
+            if hasattr(self, 'ui') and hasattr(self.ui, 'Protection_switch_Button_5') and \
+               self.ui.Protection_switch_Button_5.text() == self.trans("已開啟"):
+                if not self.first_startup:
+                    self.send_notify(self.trans(f"竄改警告: self.net_protect"), False)
+                    self.kill_process("竄改攔截", *self.track_proc)
+        except:
+            pass
 
     def handle_new_connections(self, key): # 過濾並掃描
         try:

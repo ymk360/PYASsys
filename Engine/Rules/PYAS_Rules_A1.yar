@@ -26,7 +26,7 @@ rule General_1 {
       $s15 = "Byrnies" fullword wide
       $s16 = "showString" fullword ascii
       $s17 = "AScsrhgtr" fullword ascii
-      $s18 = "ZknciocoiAw" fullword ascii
+      $s18 = "Zknciocoi Aw" fullword ascii
       $s19 = "Volute Transitions" fullword wide
       $s20 = "IOasuoihciujo" fullword ascii
       $s21 = "labelComp" wide
